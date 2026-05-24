@@ -25,3 +25,9 @@ Para servir el dashboard:
 ```bash
 /home/flow/expenses-bot/start_dashboard.sh
 ```
+
+El servidor exige login y usa SQLite local en `state/auth.sqlite3`, hashes de contraseña y enlaces de alta/restablecimiento enviados por email. Para crear o actualizar un usuario inicial:
+
+```bash
+python3 /home/flow/expenses-bot/dashboard_server.py init-user usuario@example.com 'contraseña'
+```

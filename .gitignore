@@ -3,6 +3,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+state/
+uploads/
 dashboard-server.log
 raw/
 gastos-repository/movements.json
