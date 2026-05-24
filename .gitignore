@@ -1,0 +1,9 @@
+.env
+*.env
+__pycache__/
+*.py[cod]
+.venv/
+dashboard-server.log
+raw/
+gastos-repository/movements.json
+gastos-repository/index.html
