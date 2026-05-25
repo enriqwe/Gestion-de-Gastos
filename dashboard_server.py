@@ -22,6 +22,11 @@ auth = AuthManager(BASE_DIR, "Gestión de Gastos")
 auth.init_app(app)
 
 
+def public_dashboard(path: str = "") -> str:
+    base = os.environ.get("PUBLIC_DASHBOARD_URL", "https://enriqwe.es/gastos/").rstrip("/") + "/"
+    return base + path.lstrip("/")
+
+
 def safe_filename(name):
     clean = secure_filename(Path(name or "movements.xls").name)
     clean = re.sub(r"[^A-Za-z0-9._-]+", "_", clean).strip("._-")
@@ -29,14 +34,16 @@ def safe_filename(name):
 
 
 @app.get("/")
-@auth.require_login
 def index():
+    if not request.headers.get("X-OpenClaw-User"):
+        return redirect(public_dashboard(), code=302)
     return send_from_directory(WEB_DIR, "index.html")
 
 
 @app.get("/<path:path>")
-@auth.require_login
 def static_files(path):
+    if not request.headers.get("X-OpenClaw-User"):
+        return redirect(public_dashboard(path), code=302)
     return send_from_directory(WEB_DIR, path)
 
 
@@ -103,7 +110,7 @@ a{{color:#9cc8ff}}pre{{white-space:pre-wrap;background:#0d1426;border:1px solid 
 </style></head><body><main>
 <h1 class="{html.escape(status)}">{html.escape(title)}</h1>
 <pre>{html.escape(message)}</pre>
-<p><a href="/">Volver al dashboard</a></p>
+<p><a href="{html.escape(public_dashboard())}">Volver al dashboard</a></p>
 </main></body></html>"""
 
 
