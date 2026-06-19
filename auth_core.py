@@ -15,12 +15,13 @@ from werkzeug.security import check_password_hash, generate_password_hash
 LOGIN_HTML = """<!doctype html>
 <html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{ title }}</title><style>
-body{margin:0;min-height:100vh;display:grid;place-items:center;background:#080d1a;color:#eef4ff;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
-main{width:min(420px,calc(100vw - 32px));background:#111a2e;border:1px solid #263655;border-radius:18px;padding:24px;box-shadow:0 20px 70px #0008}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;display:flex;align-items:center;justify-content:center;padding:32px;background:#080d1a;color:#eef4ff;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif}
+main{width:min(420px,100%);background:#111a2e;border:1px solid #263655;border-radius:18px;padding:24px;box-shadow:0 20px 70px #0008}
 h1{margin:0 0 8px;font-size:26px}p{color:#aebbdd;line-height:1.45}.msg{padding:10px 12px;border:1px solid #334360;background:#0d1426;border-radius:12px;margin:10px 0;color:#dbe6ff}
 label{display:block;margin:14px 0 6px;color:#c7d4f2;font-size:13px}input{width:100%;box-sizing:border-box;background:#0d1426;color:#eef4ff;border:1px solid #2f3d60;border-radius:12px;padding:12px}
 button{width:100%;margin-top:16px;background:#18a88f;color:#06131b;border:0;border-radius:12px;padding:12px;font-weight:800;cursor:pointer}
 a{color:#9cc8ff}.links{display:flex;justify-content:space-between;gap:12px;margin-top:16px;font-size:14px}
+@media(max-width:640px){body{align-items:center;justify-content:center;padding:24px 16px}main{margin:0;padding:22px 18px;border-radius:16px}h1{font-size:24px}}
 </style></head><body><main>
 <h1>{{ title }}</h1>
 {% for message in get_flashed_messages() %}<div class="msg">{{ message }}</div>{% endfor %}

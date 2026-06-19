@@ -8,6 +8,8 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "gastos-repository" / "movements.json"
+CUSTOM_RULES_PATH = BASE_DIR / "category_rules.json"
+ORANGE_SAVINGS_IBAN = "ES57 1465 0100 92 2039535408"
 
 
 def _fold(value):
@@ -22,7 +24,79 @@ def _matches(text, patterns):
     return any(re.search(pattern, text) for pattern in patterns)
 
 
-CATEGORY_RULES = [
+def _rule_matches_amount(rule, movement):
+    if rule.get("kind") == "income":
+        return movement.get("amount", 0) > 0
+    if rule.get("kind") == "expense":
+        return movement.get("amount", 0) < 0
+    return True
+
+
+def movement_text(movement):
+    return _fold(f"{movement.get('description', '')} {movement.get('comment', '')}")
+
+
+def load_custom_rules():
+    if not CUSTOM_RULES_PATH.exists():
+        return []
+    try:
+        rules = json.loads(CUSTOM_RULES_PATH.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(rules, list):
+        return []
+    return rules
+
+
+ALWAYS_RULES = [
+    {
+        "name": "sueldo_enrique_movimiento_ing",
+        "category": "Sueldo Enrique",
+        "subcategory": "Sueldo",
+        "kind": "income",
+        "patterns": [
+            r"\bmovimiento ing\b",
+        ],
+    },
+    {
+        "name": "orange_savings_transfer",
+        "category": "Movimientos excluidos",
+        "subcategory": "Traspaso entre cuentas",
+        "patterns": [
+            r"\bes57\s*1465\s*0100\s*92\s*2039535408\b",
+            r"\b1465\s*0100\s*92\s*2039535408\b",
+            r"\bmovimiento ing\b",
+            r"\bfondo de emergencia\b",
+        ],
+    },
+    {
+        "name": "sueldo_enrique",
+        "category": "Sueldo Enrique",
+        "subcategory": "Sueldo",
+        "kind": "income",
+        "patterns": [
+            r"\bsueldo\s+enri\b",
+            r"\bsueldo\b.*\benri\b",
+        ],
+    },
+    {
+        "name": "sueldo_gabi",
+        "category": "Sueldo Gabi",
+        "subcategory": "Sueldo",
+        "kind": "income",
+        "patterns": [
+            r"\bsueldo\s+gabi\b",
+            r"\bsueldo\s+\w+\s+gabi\b",
+            r"\bnomina\s+gabi\b",
+            r"\bpaga\s+extra\b.*\bgabi\b",
+            r"\b(?:aguinaldo|dietas|gastos)\b.*\bgabi\b",
+            r"\bgabi\b.*\b(?:aguinaldo|dietas|gastos)\b",
+        ],
+    },
+]
+
+
+EXPENSE_RULES = [
     {
         "name": "streaming",
         "category": "Streaming",
@@ -133,11 +207,32 @@ CATEGORY_RULES = [
 
 
 def classify_movement(movement):
+    text = movement_text(movement)
+    for rule in load_custom_rules():
+        if (
+            rule.get("text")
+            and rule.get("category")
+            and _rule_matches_amount(rule, movement)
+            and text == rule["text"]
+        ):
+            return {
+                "category": rule["category"],
+                "subcategory": rule.get("subcategory", ""),
+                "classification_rule": rule.get("name", "manual_rule"),
+            }
+
+    for rule in ALWAYS_RULES:
+        if _rule_matches_amount(rule, movement) and _matches(text, rule["patterns"]):
+            return {
+                "category": rule["category"],
+                "subcategory": rule["subcategory"],
+                "classification_rule": rule["name"],
+            }
+
     if movement.get("amount", 0) >= 0:
         return None
 
-    text = _fold(f"{movement.get('description', '')} {movement.get('comment', '')}")
-    for rule in CATEGORY_RULES:
+    for rule in EXPENSE_RULES:
         if _matches(text, rule["patterns"]):
             return {
                 "category": rule["category"],

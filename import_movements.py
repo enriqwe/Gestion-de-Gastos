@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from collections import Counter
 from datetime import datetime
@@ -17,6 +18,9 @@ BASE_DIR = Path(__file__).resolve().parent
 REPO_DIR = BASE_DIR / "gastos-repository"
 DATA_PATH = REPO_DIR / "movements.json"
 RAW_DIR = BASE_DIR / "raw"
+STATE_DIR = BASE_DIR / "state"
+DIRECT_DEBIT_REGISTRY_PATH = STATE_DIR / "direct_debit_registry.json"
+DIRECT_DEBIT_ALERTS_PATH = STATE_DIR / "direct_debit_alerts.json"
 
 
 HEADER = ["F. VALOR", "CATEGORÍA", "SUBCATEGORÍA", "DESCRIPCIÓN", "COMENTARIO", "IMPORTE (€)", "SALDO (€)"]
@@ -34,6 +38,101 @@ def clean(value):
     if isinstance(value, float) and value.is_integer():
         value = int(value)
     return str(value).strip()
+
+
+def direct_debit_name(movement):
+    text = " ".join((movement.get("description") or "").split())
+    text = re.sub(r"^recibo\s+(?:de\s+)?", "", text, flags=re.IGNORECASE).strip()
+    return text[:120] or "Sin descripción"
+
+
+def direct_debit_key(name):
+    return " ".join(name.lower().split())
+
+
+def is_direct_debit(movement):
+    return movement.get("amount", 0) < 0 and (movement.get("description") or "").strip().lower().startswith("recibo")
+
+
+def load_json(path, fallback):
+    if not path.exists():
+        return fallback
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return fallback
+    return value
+
+
+def registry_from_movements(movements):
+    registry = {}
+    for movement in movements:
+        if not is_direct_debit(movement):
+            continue
+        name = direct_debit_name(movement)
+        key = direct_debit_key(name)
+        current = registry.get(key)
+        if not current or movement["date"] < current["first_seen"]:
+            registry[key] = {
+                "name": name,
+                "first_seen": movement["date"],
+                "source_file": movement.get("source_file", ""),
+            }
+    return registry
+
+
+def detect_new_direct_debits(new_rows, known_registry, source_name):
+    alerts = []
+    seen = set(known_registry)
+    for movement in new_rows:
+        if not is_direct_debit(movement):
+            continue
+        name = direct_debit_name(movement)
+        key = direct_debit_key(name)
+        if key in seen:
+            continue
+        seen.add(key)
+        alerts.append({
+            "amount": abs(movement["amount"]),
+            "date": movement["date"],
+            "description": movement.get("description", ""),
+            "key": key,
+            "name": name,
+            "source_file": source_name,
+        })
+    return alerts
+
+
+def persist_direct_debit_watch(data, new_rows, source_name):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    if DIRECT_DEBIT_REGISTRY_PATH.exists():
+        registry = load_json(DIRECT_DEBIT_REGISTRY_PATH, {})
+        if not isinstance(registry, dict):
+            registry = {}
+    else:
+        new_ids = {row["id"] for row in new_rows}
+        registry = registry_from_movements([row for row in data.get("movements", []) if row.get("id") not in new_ids])
+
+    new_alerts = detect_new_direct_debits(new_rows, registry, source_name)
+    now = datetime.now().isoformat(timespec="seconds")
+    existing_alerts = load_json(DIRECT_DEBIT_ALERTS_PATH, [])
+    if not isinstance(existing_alerts, list):
+        existing_alerts = []
+    for alert in new_alerts:
+        existing_alerts.append({
+            "detected_at": now,
+            "first_amount": alert["amount"],
+            "first_date": alert["date"],
+            "key": alert["key"],
+            "name": alert["name"],
+            "source_file": alert["source_file"],
+            "status": "new",
+        })
+
+    registry = registry_from_movements(data.get("movements", []))
+    DIRECT_DEBIT_REGISTRY_PATH.write_text(json.dumps(registry, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    DIRECT_DEBIT_ALERTS_PATH.write_text(json.dumps(existing_alerts, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return new_alerts
 
 
 def date_value(book, sheet, row, col):
@@ -69,6 +168,21 @@ def movement_id(row):
         "" if row["balance"] is None else f'{row["balance"]:.2f}',
     ]
     return hashlib.sha256("\u241f".join(fields).encode("utf-8")).hexdigest()[:24]
+
+
+def remove_duplicate_movements(data):
+    seen = set()
+    unique = []
+    removed = []
+    for movement in data.get("movements", []):
+        movement_key = movement.get("id") or movement_id(movement)
+        if movement_key in seen:
+            removed.append(movement)
+            continue
+        seen.add(movement_key)
+        unique.append(movement)
+    data["movements"] = unique
+    return removed
 
 
 def parse_xls(path):
@@ -144,6 +258,7 @@ def main():
 
     parsed = parse_xls(source)
     data = load_existing()
+    cleaned_duplicates = remove_duplicate_movements(data)
     existing_ids = {m["id"] for m in data["movements"]}
 
     new_rows = []
@@ -171,14 +286,18 @@ def main():
         "rows_seen": len(parsed["rows"]),
         "new_rows": len(new_rows),
         "duplicates": len(duplicate_rows),
+        "cleaned_existing_duplicates": len(cleaned_duplicates),
     }
     data["imports"].append(import_record)
+    direct_debit_alerts = persist_direct_debit_watch(data, new_rows, source.name)
     DATA_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
     by_category = Counter(r["category"] or "Sin categoría" for r in new_rows if r["amount"] < 0)
-    print(f"IMPORT_OK source={source.name} seen={len(parsed['rows'])} new={len(new_rows)} duplicates={len(duplicate_rows)} total={len(data['movements'])}")
+    print(f"IMPORT_OK source={source.name} seen={len(parsed['rows'])} new={len(new_rows)} duplicates={len(duplicate_rows)} cleaned_existing_duplicates={len(cleaned_duplicates)} total={len(data['movements'])}")
     if by_category:
         print("NEW_EXPENSE_CATEGORIES " + ", ".join(f"{k}:{v}" for k, v in by_category.most_common(8)))
+    if direct_debit_alerts:
+        print("NEW_DIRECT_DEBIT_ALERTS " + " | ".join(f"{a['name']} {money(a['amount'])} {a['date']}" for a in direct_debit_alerts))
 
 
 if __name__ == "__main__":
